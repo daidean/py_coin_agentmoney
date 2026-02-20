@@ -2,6 +2,7 @@ import os
 import time
 import requests
 from typing import Any
+from pprint import pprint
 from dotenv import load_dotenv
 
 
@@ -217,6 +218,18 @@ class Bankr:
         }
 
         response = requests.post(url, headers=self.get_headers(), json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def get_user_info(self) -> dict:
+        """
+        查询用户信息
+
+        Returns:
+            用户信息
+        """
+        url = f"{self.api_url}/agent/me"
+        response = requests.get(url, headers=self.get_headers())
         response.raise_for_status()
         return response.json()
 
@@ -447,5 +460,4 @@ if __name__ == "__main__":
         api_url=os.environ["BANKR_URL"],
     )
 
-    print("=== 查询余额 ===")
-    print(bankr.get_balance("Base"))
+    pprint(bankr.get_user_info())
