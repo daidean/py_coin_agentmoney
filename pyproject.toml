@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "python-dotenv>=1.2.1",
     "requests>=2.32.5",
+    "winotify>=1.1.0",
 ]
 
 [[tool.uv.index]]

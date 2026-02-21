@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from bankr import Bankr
 from llm import LLM
+from notify import windows_notify
 
 
 class AgentMoney:
@@ -171,6 +172,7 @@ No preamble. No JSON. Just the artifact.
             return 1
 
         print(f"项目方验证结果：通过，正在提交奖励交易")
+        windows_notify(f"项目方验证结果：{resp_json}", "验证通过", "AgentMoney")
         subbit_resp = self.bankr.submit_transaction(resp_json["transaction"])
         print(f"项目方奖励提交结果：{subbit_resp}")
         return 0
