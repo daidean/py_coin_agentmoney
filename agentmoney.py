@@ -163,7 +163,9 @@ No preamble. No JSON. Just the artifact.
             "nonce": nonce,
         }
         resp = requests.post(url, headers=header, json=data)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            print(f"项目方验证异常：{resp.text}")
+            return 1
         resp_json = resp.json()
         print(f"项目方验证结果：{resp_json}")
 

@@ -64,7 +64,8 @@ class Bankr:
             data["threadId"] = thread_id
 
         response = requests.post(url, headers=self.get_headers(), json=data)
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise Exception(f"<{response.status_code}> {response.text}")
         result = response.json()
 
         # 保存 threadId 用于后续对话
@@ -85,7 +86,8 @@ class Bankr:
         """
         url = f"{self.api_url}/agent/job/{job_id}"
         response = requests.get(url, headers=self.get_headers())
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise Exception(f"<{response.status_code}> {response.text}")
         return response.json()
 
     def cancel_job(self, job_id: str) -> dict:
@@ -100,7 +102,8 @@ class Bankr:
         """
         url = f"{self.api_url}/agent/job/{job_id}/cancel"
         response = requests.post(url, headers=self.get_headers())
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise Exception(f"<{response.status_code}> {response.text}")
         return response.json()
 
     def prompt(
@@ -193,7 +196,8 @@ class Bankr:
             data["transaction"] = transaction
 
         response = requests.post(url, headers=self.get_headers(), json=data)
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise Exception(f"<{response.status_code}> {response.text}")
         return response.json()
 
     def submit_transaction(
@@ -220,7 +224,8 @@ class Bankr:
         }
 
         response = requests.post(url, headers=self.get_headers(), json=data)
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise Exception(f"<{response.status_code}> {response.text}")
         return response.json()
 
     def get_user_info(self) -> dict:
@@ -232,7 +237,8 @@ class Bankr:
         """
         url = f"{self.api_url}/agent/me"
         response = requests.get(url, headers=self.get_headers())
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise Exception(f"<{response.status_code}> {response.text}")
         return response.json()
 
     # ==================== 便捷方法 ====================

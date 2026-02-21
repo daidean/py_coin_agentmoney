@@ -23,7 +23,8 @@ class LLM:
         data = {"model": self.llm_model, "messages": messages}
 
         resp = requests.post(url, headers=self.get_headers(), json=data)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise Exception(f"<{resp.status_code}> {resp.text}")
         return resp.json()
 
     def chat(self, message) -> str:
