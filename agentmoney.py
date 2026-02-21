@@ -94,8 +94,8 @@ class AgentMoney:
             resp = requests.get(url, headers=header)
             if resp.status_code != 200:
                 retry -= 1
-                print(f"请求异常: 状态为{resp.status_code}, 重试中...{3-retry}")
-                time.sleep(1)
+                print(f"请求异常: 状态为{resp.status_code}, 等待10s后重试...{3-retry}")
+                time.sleep(10)
                 continue
 
             # print(resp.text)  # DEBUG
@@ -197,4 +197,5 @@ if __name__ == "__main__":
         try:
             agent.mine()
         except:
-            print("挖矿异常，正在重试...")
+            print("挖矿异常，等待10s后重试...")
+            time.sleep(10)
