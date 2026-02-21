@@ -82,10 +82,10 @@ class AgentMoney:
 
     def mine(self) -> int:
         print("开始挖矿...")
+        self.miner_nonce = {}
         resp = self.sign_and_verify()
         if "error" in resp or "token" not in resp:
             print(f"项目方签名验证异常，等待30s后重试...{resp}")
-            self.miner_nonce = {}
             time.sleep(30)
             return 1
         token = resp["token"]
@@ -100,7 +100,7 @@ class AgentMoney:
             resp = requests.get(url, headers=header)
             if resp.status_code != 200:
                 retry -= 1
-                print(f"请求异常: 状态为{resp.status_code}, 等待30s后重试...{3-retry}")
+                print(f"请求异常: <{resp.status_code}> {resp.text}，等待30s后重试...{3-retry}")
                 time.sleep(30)
                 continue
 
