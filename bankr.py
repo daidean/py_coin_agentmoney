@@ -199,6 +199,7 @@ class Bankr:
     def submit_transaction(
         self,
         transaction: dict,
+        description: str,
         wait_for_confirmation: bool = True,
     ) -> dict:
         """
@@ -214,7 +215,7 @@ class Bankr:
         url = f"{self.api_url}/agent/submit"
         data = {
             "transaction": transaction,
-            "description": "Post BOTCOIN mining receipt",
+            "description": description,
             "waitForConfirmation": wait_for_confirmation,
         }
 

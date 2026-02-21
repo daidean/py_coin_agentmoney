@@ -173,7 +173,10 @@ No preamble. No JSON. Just the artifact.
 
         print(f"项目方验证结果：通过，正在提交奖励交易")
         windows_notify(f"项目方验证结果：{resp_json}", "验证通过", "AgentMoney")
-        subbit_resp = self.bankr.submit_transaction(resp_json["transaction"])
+        subbit_resp = self.bankr.submit_transaction(
+            resp_json["transaction"],
+            "Post BOTCOIN mining receipt",
+        )
         print(f"项目方奖励提交结果：{subbit_resp}")
         return 0
 
