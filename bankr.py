@@ -214,6 +214,7 @@ class Bankr:
         url = f"{self.api_url}/agent/submit"
         data = {
             "transaction": transaction,
+            "description": "Post BOTCOIN mining receipt",
             "waitForConfirmation": wait_for_confirmation,
         }
 
