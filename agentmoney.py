@@ -82,7 +82,13 @@ class AgentMoney:
 
     def mine(self) -> int:
         print("开始挖矿...")
-        token = self.sign_and_verify()["token"]
+        resp = self.sign_and_verify()
+        if "error" in resp or "token" not in resp:
+            print(f"项目方签名验证异常，等待30s后重试...{resp}")
+            self.miner_nonce = {}
+            time.sleep(30)
+            return 1
+        token = resp["token"]
         print(f"获取Token：{token}")
         header = self.get_headers() | {"Authorization": f"Bearer {token}"}
         nonce = secrets.token_hex(16)
@@ -94,11 +100,10 @@ class AgentMoney:
             resp = requests.get(url, headers=header)
             if resp.status_code != 200:
                 retry -= 1
-                print(f"请求异常: 状态为{resp.status_code}, 等待10s后重试...{3-retry}")
-                time.sleep(10)
+                print(f"请求异常: 状态为{resp.status_code}, 等待30s后重试...{3-retry}")
+                time.sleep(30)
                 continue
 
-            # print(resp.text)  # DEBUG
             resp_json = resp.json()
             if "error" in resp_json:
                 retry -= 1
@@ -202,5 +207,5 @@ if __name__ == "__main__":
         try:
             agent.mine()
         except:
-            print("挖矿异常，等待10s后重试...")
-            time.sleep(10)
+            print("挖矿异常，等待30s后重试...")
+            time.sleep(30)
