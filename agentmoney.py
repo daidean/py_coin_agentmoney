@@ -28,10 +28,12 @@ class AgentMoney:
         self.llm_apikey = llm_apikey
         self.llm_model = llm_model
 
-        self.app_address = self.get_bankr_address()
+        self.app_address = self.bankr_get_address()
 
-    def get_bankr_address(self) -> str:
-        url = f"{self.bankr_url}/agent/me"
+    ### 请求方法
+
+    def bankr_get(self, path: str, tag: str) -> dict[str, Any]:
+        url = f"{self.bankr_url}{path}"
         hds = {
             "Content-Type": "application/json",
             "X-API-Key": self.bankr_key,
@@ -43,54 +45,31 @@ class AgentMoney:
             code = resp.status_code
 
             if code == 200:
-                wallets = resp.json()["wallets"]
-                evm_wallet = [w for w in wallets if w["chain"] == "evm"][0]
-                evm_address = evm_wallet["address"]
-                logger.info(f"Bankr: 获取evm地址成功 {evm_address}")
-                return evm_address
+                return resp.json()
             elif code == 429 or 500 <= code < 600:
-                logger.warning(f"Bankr: 获取evm地址异常 <{code}> {resp.text}")
+                logger.warning(f"Bankr: {tag}异常 <{code}> {resp.text}")
                 logger.warning(f"Bankr: 等待{wait}秒后重试...")
                 retry -= 1
                 time.sleep(wait)
                 continue
             else:
-                raise Exception(f"Bankr: 获取evm地址异常 <{code}> {resp.text}")
+                raise Exception(f"Bankr: {tag}异常 <{code}> {resp.text}")
         else:
-            raise Exception(f"Bankr: 获取evm地址失败")
+            raise Exception(f"Bankr: {tag}失败")
 
-    def get_app_nonce(self) -> dict[str, Any]:
-        url = f"{self.app_url}/v1/auth/nonce"
-        data = {"miner": self.app_address}
-
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.post(url, json=data)
-            code = resp.status_code
-
-            if code == 200:
-                resp_json = resp.json()
-                logger.info(f"{self.app_name}: 获取nonce成功 {resp_json}")
-                return resp_json
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"{self.app_name}: 获取nonce异常 <{code}> {resp.text}")
-                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"{self.app_name}: 获取nonce异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"{self.app_name}: 获取nonce失败")
-
-    def sign_and_verify(self, message: str) -> dict[str, Any]:
-        url = f"{self.bankr_url}/agent/sign"
+    def bankr_post(
+        self,
+        path: str,
+        headers: dict,
+        data: dict,
+        tag: str,
+    ) -> dict[str, Any]:
+        url = f"{self.bankr_url}{path}"
         hds = {
             "Content-Type": "application/json",
             "X-API-Key": self.bankr_key,
         }
-        data = {"signatureType": "personal_sign", "message": message}
+        hds.update(headers)
         retry = self.default_retry_count
         wait = self.default_wait_seconds
         while retry:
@@ -98,68 +77,25 @@ class AgentMoney:
             code = resp.status_code
 
             if code == 200:
-                app_sign = resp.json()
-                logger.info(f"{self.app_name}: 获取签名成功 {app_sign}")
-                break
+                return resp.json()
             elif code == 429 or 500 <= code < 600:
-                logger.warning(f"{self.app_name}: 获取签名异常 <{code}> {resp.text}")
+                logger.warning(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
                 logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
                 retry -= 1
                 time.sleep(wait)
                 continue
             else:
-                raise Exception(f"{self.app_name}: 获取签名异常 <{code}> {resp.text}")
+                raise Exception(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
         else:
-            raise Exception(f"{self.app_name}: 获取签名失败")
+            raise Exception(f"{self.app_name}: {tag}失败")
 
-        url = f"{self.app_url}/v1/auth/verify"
-        data = {
-            "miner": self.app_address,
-            "message": message,
-            "signature": app_sign["signature"],
-        }
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.post(url, headers=hds, json=data)
-            code = resp.status_code
-
-            if code == 200:
-                resp_json = resp.json()
-                logger.info(f"{self.app_name}: 签名验证成功 {resp_json}")
-                return resp_json
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"{self.app_name}: 签名验证异常 <{code}> {resp.text}")
-                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"{self.app_name}: 签名验证异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"{self.app_name}: 签名验证失败")
-
-    def get_headers(self) -> dict[str, str]:
-        return {
-            "Content-type": "Application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            + "AppleWebKit/537.36 (KHTML, like Gecko) "
-            + "Chrome/91.0.4472.124 Safari/537.36",
-        }
-
-    def mine(self) -> None:
-        logger.info(f"{self.app_name}: 开始挖矿...")
-        app_nonce = self.get_app_nonce()
-        app_sign = self.sign_and_verify(app_nonce["message"])
-        logger.info(f"{self.app_name}: 获取Token {app_sign["token"]}")
-
-        nonce = secrets.token_hex(16)
-        url = f"{self.app_url}/v1/challenge?miner={self.app_address}&nonce={nonce}"
+    def app_get(self, path: str, headers: dict, tag: str) -> dict[str, Any]:
+        url = f"{self.app_url}{path}"
         hds = {
             "Content-type": "Application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Authorization": f"Bearer {app_sign["token"]}",
         }
+        hds.update(headers)
         retry = self.default_retry_count
         wait = self.default_wait_seconds
         while retry:
@@ -167,25 +103,121 @@ class AgentMoney:
             code = resp.status_code
 
             if code == 200:
-                app_challenge = resp.json()
-                logger.info(
-                    f"{self.app_name}: 获取挑战信息成功 {app_challenge["challengeId"]}"
-                )
-                break
+                return resp.json()
             elif code == 429 or 500 <= code < 600:
-                logger.warning(
-                    f"{self.app_name}: 获取挑战信息异常 <{code}> {resp.text}"
-                )
+                logger.warning(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
                 logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
                 retry -= 1
                 time.sleep(wait)
                 continue
             else:
-                raise Exception(
-                    f"{self.app_name}: 获取挑战信息异常 <{code}> {resp.text}"
-                )
+                raise Exception(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
         else:
-            raise Exception(f"{self.app_name}: 获取挑战信息失败")
+            raise Exception(f"{self.app_name}: {tag}失败")
+
+    def app_post(
+        self,
+        path: str,
+        headers: dict,
+        data: dict,
+        tag: str,
+    ) -> dict[str, Any]:
+        url = f"{self.app_url}{path}"
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            resp = requests.post(url, headers=headers, json=data)
+            code = resp.status_code
+
+            if code == 200:
+                return resp.json()
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
+                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
+                retry -= 1
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"{self.app_name}: {tag}失败")
+
+    def llm_get(self, path: str) -> dict[str, Any]:
+        assert path
+        return {}
+
+    def llm_post(
+        self,
+        path: str,
+        headers: dict,
+        content: dict,
+    ) -> dict[str, Any]:
+        url = f"{self.llm_endpoint}{path}"
+        hds = {
+            "Authorization": f"Bearer {self.llm_apikey}",
+            "Content-Type": "application/json",
+        }
+        hds.update(headers)
+        data = {
+            "model": self.llm_model,
+            "messages": [{"role": "user", "content": content}],
+        }
+        resp = requests.post(url, headers=hds, json=data)
+        code = resp.status_code
+
+        if code == 200:
+            return resp.json()
+        else:
+            raise Exception(f"LLM: 大模型请求异常 <{code}> {resp.text}")
+
+    ### 功能方法
+
+    def bankr_get_address(self) -> str:
+        resp = self.bankr_get("/agent/me", "获取evm地址")
+        wallets = resp["wallets"]
+        evm_wallet = [w for w in wallets if w["chain"] == "evm"][0]
+        evm_address = evm_wallet["address"]
+        logger.info(f"Bankr: 获取evm地址成功 {evm_address}")
+        return evm_address
+
+    def app_get_nonce(self) -> dict[str, Any]:
+        data = {"miner": self.app_address}
+        resp = self.app_post("/v1/auth/nonce", {}, data, "获取nonce")
+        logger.info(f"{self.app_name}: 获取nonce成功 {resp}")
+        return resp
+
+    def bankr_sign_and_app_verify(self, message: str) -> dict[str, Any]:
+        data = {
+            "signatureType": "personal_sign",
+            "message": message,
+        }
+        resp = self.bankr_post("/agent/sign", {}, data, "获取签名")
+        logger.info(f"Bankr: 获取签名成功 {resp}")
+
+        data = {
+            "miner": self.app_address,
+            "message": message,
+            "signature": resp["signature"],
+        }
+        resp = self.app_post("/v1/auth/verify", {}, data, "签名验证")
+        logger.info(f"{self.app_name}: 签名验证成功 {resp}")
+        return resp
+
+    ### 挖矿
+
+    def mine(self) -> None:
+        logger.info(f"{self.app_name}: 开始挖矿...")
+
+        app_nonce = self.app_get_nonce()
+        app_sign = self.bankr_sign_and_app_verify(app_nonce["message"])
+
+        nonce = secrets.token_hex(16)
+        logger.info(f"{self.app_name}: 生成随机数 {nonce}")
+
+        path = f"/v1/challenge?miner={self.app_address}&nonce={nonce}"
+        app_auth = {"Authorization": f"Bearer {app_sign["token"]}"}
+        app_challenge = self.app_get(path, app_auth, "获取挑战信息")
+        logger.info(f"{self.app_name}: 获取挑战信息成功 {app_challenge["challengeId"]}")
 
         content = f"""
 ### DOC
@@ -223,62 +255,26 @@ No preamble. No JSON. Just the artifact.
 
 {app_challenge["solveInstructions"]}
 """
+
         logger.info(f"LLM: 大模型请求中...")
-        url = f"{self.llm_endpoint}/v1/chat/completions"
-        hds = {
-            "Authorization": f"Bearer {self.llm_apikey}",
-            "Content-Type": "application/json",
-        }
         data = {
             "model": self.llm_model,
             "messages": [{"role": "user", "content": content}],
         }
-        wait = self.default_wait_seconds
-        resp = requests.post(url, headers=hds, json=data)
-        code = resp.status_code
+        llm_resp = self.llm_post("/v1/chat/completions", {}, data)
+        llm_content = llm_resp["choices"][0]["message"]["content"]
+        logger.info(f"LLM: 大模型答案 {llm_content}")
 
-        if code == 200:
-            llm_resp = resp.json()
-            llm_content = llm_resp["choices"][0]["message"]["content"]
-            logger.info(f"LLM: 大模型答案 {llm_content}")
-        else:
-            raise Exception(f"LLM: 大模型请求异常 <{code}> {resp.text}")
-
-        url = f"{self.app_url}/v1/submit"
-        hds = {
-            "Content-type": "Application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Authorization": f"Bearer {app_sign["token"]}",
-        }
         data = {
             "miner": self.app_address,
             "challengeId": app_challenge["challengeId"],
             "artifact": llm_content,
             "nonce": nonce,
         }
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.post(url, headers=hds, json=data)
-            code = resp.status_code
-
-            if code == 200:
-                app_result = resp.json()
-                if app_result["pass"]:
-                    logger.info(f"{self.app_name}: 提交答案成功 {app_result}")
-                    break
-                else:
-                    raise Exception(f"{self.app_name}: 答案校验失败 {app_result}")
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"{self.app_name}: 提交答案异常 <{code}> {resp.text}")
-                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"{self.app_name}: 提交答案异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"{self.app_name}: 提交答案失败")
+        app_result = self.app_post("/v1/submit", app_auth, data, "提交答案")
+        if not app_result["pass"]:
+            raise Exception(f"{self.app_name}: 答案校验失败 {app_result}")
+        logger.info(f"{self.app_name}: 提交答案成功 {app_result}")
 
         toast = Notification(
             app_id="AgentMoney",
@@ -288,41 +284,21 @@ No preamble. No JSON. Just the artifact.
         toast.set_audio(audio.Default, False)
         toast.show()
 
-        url = f"{self.bankr_url}/agent/submit"
-        hds = {
-            "Content-Type": "application/json",
-            "X-API-Key": self.bankr_key,
-        }
         data = {
             "transaction": app_result["transaction"],
             "description": "Post BOTCOIN mining receipt",
             "waitForConfirmation": True,
         }
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.post(url, headers=hds, json=data)
-            code = resp.status_code
-
-            if code == 200:
-                submit_result = resp.json()
-                logger.info(f"Bankr: 奖励交易广播成功 {submit_result}")
-                break
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"Bankr: 奖励交易广播异常 <{code}> {resp.text}")
-                logger.warning(f"Bankr: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"Bankr: 奖励交易广播异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"Bankr: 奖励交易广播失败")
+        submit_result = self.bankr_post("/agent/submit", {}, data, "奖励交易广播")
+        logger.info(f"Bankr: 奖励交易广播成功 {submit_result}")
 
     def loop_mine(self) -> int:
         while True:
             try:
                 self.mine()
+            except KeyboardInterrupt as e:
+                logger.info("收到中断信号，程序已停止")
+                return 1
             except Exception as e:
                 logger.error(e)
 
