@@ -1,76 +1,143 @@
 import os
-import sys
 import time
 import secrets
 import requests
 from typing import Any
-from datetime import datetime, timezone
+from loguru import logger
 from dotenv import load_dotenv
-from bankr import Bankr
-from llm import LLM
-from notify import windows_notify
+from winotify import Notification, audio
 
 
 class AgentMoney:
-    def __init__(self, agentmoney_url: str, bankr: Bankr, llm: LLM) -> None:
-        self.agentmoney_url = agentmoney_url
-        self.bankr = bankr
-        self.llm = llm
+    app_name = "AgentMoney"
+    app_url = "https://coordinator.agentmoney.net"
+    default_wait_seconds = 30
+    default_retry_count = 3
 
-        self.miner_address = ""
-        self.miner_nonce = {}
-        self.miner_sig = ""
+    def __init__(
+        self,
+        bankr_url: str,
+        bankr_key: str,
+        llm_endpoint: str,
+        llm_apikey: str,
+        llm_model: str,
+    ) -> None:
+        self.bankr_url = bankr_url
+        self.bankr_key = bankr_key
+        self.llm_endpoint = llm_endpoint
+        self.llm_apikey = llm_apikey
+        self.llm_model = llm_model
 
-    def get_address(self) -> str:
-        if self.miner_address:
-            return self.miner_address
+        self.app_address = self.get_bankr_address()
 
-        userinfo = self.bankr.get_user_info()
-        wallets = userinfo["wallets"]
-        evm_wallet = [w for w in wallets if w["chain"] == "evm"]
+    def get_bankr_address(self) -> str:
+        url = f"{self.bankr_url}/agent/me"
+        hds = {
+            "Content-Type": "application/json",
+            "X-API-Key": self.bankr_key,
+        }
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            resp = requests.get(url, headers=hds)
+            code = resp.status_code
 
-        assert evm_wallet
-        assert len(evm_wallet) == 1
+            if code == 200:
+                wallets = resp.json()["wallets"]
+                evm_wallet = [w for w in wallets if w["chain"] == "evm"][0]
+                evm_address = evm_wallet["address"]
+                logger.info(f"Bankr: 获取evm地址成功 {evm_address}")
+                return evm_address
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(f"Bankr: 获取evm地址异常 <{code}> {resp.text}")
+                logger.warning(f"Bankr: 等待{wait}秒后重试...")
+                retry -= 1
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"Bankr: 获取evm地址异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"Bankr: 获取evm地址失败")
 
-        evm_wallet = evm_wallet[0]
-        self.miner_address = evm_wallet["address"]
-        return self.miner_address
+    def get_app_nonce(self) -> dict[str, Any]:
+        url = f"{self.app_url}/v1/auth/nonce"
+        data = {"miner": self.app_address}
 
-    def get_nonce(self) -> dict[str, Any]:
-        now_time = datetime.now(timezone.utc)
-        if (
-            self.miner_nonce
-            and datetime.fromisoformat(self.miner_nonce["expiresAt"]) > now_time
-        ):
-            return self.miner_nonce
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            resp = requests.post(url, json=data)
+            code = resp.status_code
 
-        url = f"{self.agentmoney_url}/v1/auth/nonce"
-        data = {"miner": self.get_address()}
+            if code == 200:
+                resp_json = resp.json()
+                logger.info(f"{self.app_name}: 获取nonce成功 {resp_json}")
+                return resp_json
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(f"{self.app_name}: 获取nonce异常 <{code}> {resp.text}")
+                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
+                retry -= 1
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"{self.app_name}: 获取nonce异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"{self.app_name}: 获取nonce失败")
 
-        resp = requests.post(url, json=data)
-        self.miner_nonce = resp.json()
-        return self.miner_nonce
+    def sign_and_verify(self, message: str) -> dict[str, Any]:
+        url = f"{self.bankr_url}/agent/sign"
+        hds = {
+            "Content-Type": "application/json",
+            "X-API-Key": self.bankr_key,
+        }
+        data = {"signatureType": "personal_sign", "message": message}
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            resp = requests.post(url, headers=hds, json=data)
+            code = resp.status_code
 
-    def sign_and_verify(self) -> dict[str, Any]:
-        nonce = self.get_nonce()
-        message = nonce["message"]
+            if code == 200:
+                app_sign = resp.json()
+                logger.info(f"{self.app_name}: 获取签名成功 {app_sign}")
+                break
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(f"{self.app_name}: 获取签名异常 <{code}> {resp.text}")
+                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
+                retry -= 1
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"{self.app_name}: 获取签名异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"{self.app_name}: 获取签名失败")
 
-        sign = self.bankr.sign("personal_sign", message=message)
-
-        url = f"{self.agentmoney_url}/v1/auth/verify"
+        url = f"{self.app_url}/v1/auth/verify"
         data = {
-            "miner": self.get_address(),
+            "miner": self.app_address,
             "message": message,
-            "signature": sign["signature"],
+            "signature": app_sign["signature"],
         }
-        resp = requests.post(url, json=data)
-        return resp.json()
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            resp = requests.post(url, headers=hds, json=data)
+            code = resp.status_code
 
-    def get_proxys(self) -> dict[str, str]:
-        return {
-            "http": "http://127.0.0.1:10808",
-            "https": "http://127.0.0.1:10808",
-        }
+            if code == 200:
+                resp_json = resp.json()
+                logger.info(f"{self.app_name}: 签名验证成功 {resp_json}")
+                return resp_json
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(f"{self.app_name}: 签名验证异常 <{code}> {resp.text}")
+                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
+                retry -= 1
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"{self.app_name}: 签名验证异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"{self.app_name}: 签名验证失败")
 
     def get_headers(self) -> dict[str, str]:
         return {
@@ -80,58 +147,60 @@ class AgentMoney:
             + "Chrome/91.0.4472.124 Safari/537.36",
         }
 
-    def mine(self) -> int:
-        print("开始挖矿...")
-        self.miner_nonce = {}
-        resp = self.sign_and_verify()
-        if "error" in resp or "token" not in resp:
-            print(f"项目方签名验证异常，等待30s后重试...{resp}")
-            time.sleep(30)
-            return 1
-        token = resp["token"]
-        print(f"获取Token：{token}")
-        header = self.get_headers() | {"Authorization": f"Bearer {token}"}
+    def mine(self) -> None:
+        logger.info(f"{self.app_name}: 开始挖矿...")
+        app_nonce = self.get_app_nonce()
+        app_sign = self.sign_and_verify(app_nonce["message"])
+        logger.info(f"{self.app_name}: 获取Token {app_sign["token"]}")
+
         nonce = secrets.token_hex(16)
-        print(f"获取随机数：{nonce}")
-
-        retry = 3
-        url = f"{self.agentmoney_url}/v1/challenge?miner={self.get_address()}&nonce={nonce}"
+        url = f"{self.app_url}/v1/challenge?miner={self.app_address}&nonce={nonce}"
+        hds = {
+            "Content-type": "Application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Authorization": f"Bearer {app_sign["token"]}",
+        }
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
         while retry:
-            resp = requests.get(url, headers=header)
-            if resp.status_code != 200:
-                retry -= 1
-                print(f"请求异常: <{resp.status_code}> {resp.text}，等待30s后重试...{3-retry}")
-                time.sleep(30)
-                continue
+            resp = requests.get(url, headers=hds)
+            code = resp.status_code
 
-            resp_json = resp.json()
-            if "error" in resp_json:
+            if code == 200:
+                app_challenge = resp.json()
+                logger.info(
+                    f"{self.app_name}: 获取挑战信息成功 {app_challenge["challengeId"]}"
+                )
+                break
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(
+                    f"{self.app_name}: 获取挑战信息异常 <{code}> {resp.text}"
+                )
+                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
                 retry -= 1
-                print(f"响应异常: {resp_json["error"]}")
-                time.sleep(resp_json.get("retryAfterSeconds", 1))
+                time.sleep(wait)
                 continue
-
-            challenge_id = resp_json["challengeId"]
-            print(f"获取挑战ID：{challenge_id}")
-            break
+            else:
+                raise Exception(
+                    f"{self.app_name}: 获取挑战信息异常 <{code}> {resp.text}"
+                )
         else:
-            print("重试超时: 请求异常且重试后依然异常")
-            return 1
+            raise Exception(f"{self.app_name}: 获取挑战信息失败")
 
         content = f"""
 ### DOC
 
-{resp_json["doc"]}
+{app_challenge["doc"]}
 
 ### Questions
-{"\n- ".join(resp_json["questions"])}
+{"\n- ".join(app_challenge["questions"])}
 
 
 ### Constraints
-{"\n- ".join(resp_json["constraints"])}
+{"\n- ".join(app_challenge["constraints"])}
 
 ### Companies
-{"\n- ".join(resp_json["companies"])}
+{"\n- ".join(app_challenge["companies"])}
 
 ### Solve the Hybrid Challenge
 
@@ -152,60 +221,119 @@ No preamble. No JSON. Just the artifact.
 
 ### SolveInstructions
 
-{resp_json["solveInstructions"]}
+{app_challenge["solveInstructions"]}
 """
-
-        print(f"AI请求中...{datetime.now()}")
-        llm_content = self.llm.chat(content)
-        print(f"AI响应结束...{datetime.now()}")
-        print(f"AI答案为：{llm_content}")
-
-        url = f"{self.agentmoney_url}/v1/submit"
+        logger.info(f"LLM: 大模型请求中...")
+        url = f"{self.llm_endpoint}/v1/chat/completions"
+        hds = {
+            "Authorization": f"Bearer {self.llm_apikey}",
+            "Content-Type": "application/json",
+        }
         data = {
-            "miner": self.get_address(),
-            "challengeId": challenge_id,
+            "model": self.llm_model,
+            "messages": [{"role": "user", "content": content}],
+        }
+        wait = self.default_wait_seconds
+        resp = requests.post(url, headers=hds, json=data)
+        code = resp.status_code
+
+        if code == 200:
+            llm_resp = resp.json()
+            llm_content = llm_resp["choices"][0]["message"]["content"]
+            logger.info(f"LLM: 大模型答案 {llm_content}")
+        else:
+            raise Exception(f"LLM: 大模型请求异常 <{code}> {resp.text}")
+
+        url = f"{self.app_url}/v1/submit"
+        hds = {
+            "Content-type": "Application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Authorization": f"Bearer {app_sign["token"]}",
+        }
+        data = {
+            "miner": self.app_address,
+            "challengeId": app_challenge["challengeId"],
             "artifact": llm_content,
             "nonce": nonce,
         }
-        resp = requests.post(url, headers=header, json=data)
-        if resp.status_code != 200:
-            print(f"项目方验证异常：{resp.text}")
-            return 1
-        resp_json = resp.json()
-        print(f"项目方验证结果：{resp_json}")
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            resp = requests.post(url, headers=hds, json=data)
+            code = resp.status_code
 
-        if "pass" not in resp_json or resp_json["pass"] == False:
-            print(f"项目方验证结果：未通过")
-            return 1
+            if code == 200:
+                app_result = resp.json()
+                if app_result["pass"]:
+                    logger.info(f"{self.app_name}: 提交答案成功 {app_result}")
+                    break
+                else:
+                    raise Exception(f"{self.app_name}: 答案校验失败 {app_result}")
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(f"{self.app_name}: 提交答案异常 <{code}> {resp.text}")
+                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
+                retry -= 1
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"{self.app_name}: 提交答案异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"{self.app_name}: 提交答案失败")
 
-        print(f"项目方验证结果：通过，正在提交奖励交易")
-        windows_notify(f"项目方验证结果：{resp_json}", "验证通过", "AgentMoney")
-        subbit_resp = self.bankr.submit_transaction(
-            resp_json["transaction"],
-            "Post BOTCOIN mining receipt",
+        toast = Notification(
+            app_id="AgentMoney",
+            title="验证通过",
+            msg=f"项目方验证结果：{app_result}",
         )
-        print(f"项目方奖励提交结果：{subbit_resp}")
-        return 0
+        toast.set_audio(audio.Default, False)
+        toast.show()
+
+        url = f"{self.bankr_url}/agent/submit"
+        hds = {
+            "Content-Type": "application/json",
+            "X-API-Key": self.bankr_key,
+        }
+        data = {
+            "transaction": app_result["transaction"],
+            "description": "Post BOTCOIN mining receipt",
+            "waitForConfirmation": True,
+        }
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            resp = requests.post(url, headers=hds, json=data)
+            code = resp.status_code
+
+            if code == 200:
+                submit_result = resp.json()
+                logger.info(f"Bankr: 奖励交易广播成功 {submit_result}")
+                break
+            elif code == 429 or 500 <= code < 600:
+                logger.warning(f"Bankr: 奖励交易广播异常 <{code}> {resp.text}")
+                logger.warning(f"Bankr: 等待{wait}秒后重试...")
+                retry -= 1
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"Bankr: 奖励交易广播异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"Bankr: 奖励交易广播失败")
+
+    def loop_mine(self) -> int:
+        while True:
+            try:
+                self.mine()
+            except Exception as e:
+                logger.error(e)
 
 
 if __name__ == "__main__":
     load_dotenv(override=True)
 
-    bankr = Bankr(
-        api_key=os.environ["BANKR_KEY"],
-        api_url=os.environ["BANKR_URL"],
-    )
-
-    llm = LLM(
-        llm_url=os.environ["LLM_URL"],
-        llm_key=os.environ["LLM_KEY"],
+    AgentMoney(
+        bankr_key=os.environ["BANKR_KEY"],
+        bankr_url=os.environ["BANKR_URL"],
+        llm_endpoint=os.environ["LLM_URL"],
+        llm_apikey=os.environ["LLM_KEY"],
         llm_model=os.environ["LLM_MODEL"],
-    )
-
-    agent = AgentMoney(os.environ["AGENTMONEY_URL"], bankr, llm)
-    while True:
-        try:
-            agent.mine()
-        except:
-            print("挖矿异常，等待30s后重试...")
-            time.sleep(30)
+    ).loop_mine()
