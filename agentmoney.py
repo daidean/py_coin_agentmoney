@@ -2,7 +2,7 @@ import os
 import time
 import secrets
 import requests
-from typing import Any
+from typing import Any, Callable
 from loguru import logger
 from dotenv import load_dotenv
 from winotify import Notification, audio
@@ -32,30 +32,59 @@ class AgentMoney:
 
     ### 请求方法
 
-    def bankr_get(self, path: str, tag: str) -> dict[str, Any]:
+    def requests_retry(
+        self,
+        app: str,
+        tag: str,
+        requests_fn: Callable,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        retry = self.default_retry_count
+        wait = self.default_wait_seconds
+        while retry:
+            retry -= 1
+            resp: requests.Response = requests_fn(*args, **kwargs)
+            code = resp.status_code
+
+            if code == 200:
+                return resp.json()
+            elif code == 429:
+                if "retryAfterSeconds" in resp.text:
+                    wait = max(int(resp.json()["retryAfterSeconds"]), wait)
+                logger.warning(f"{app}: {tag}请求频率过高 等待{wait}秒后重试...")
+                time.sleep(wait)
+                continue
+            elif code == 403:
+                if "retryAfterSeconds" in resp.text:
+                    wait = max(int(resp.json()["retryAfterSeconds"]), wait)
+                logger.warning(f"{app}: {tag}请求受限于余额不足 等待{wait}秒后重试...")
+                time.sleep(wait)
+                continue
+            elif 500 <= code < 600:
+                logger.warning(f"{app}: {tag}异常 <{code}> {resp.text}")
+                logger.warning(f"{app}: 等待{wait}秒后重试...")
+                time.sleep(wait)
+                continue
+            else:
+                raise Exception(f"{app}: {tag}异常 <{code}> {resp.text}")
+        else:
+            raise Exception(f"{app}: {tag}失败")
+
+    def bankr_get(self, path: str, headers: dict, tag: str) -> dict[str, Any]:
         url = f"{self.bankr_url}{path}"
         hds = {
             "Content-Type": "application/json",
             "X-API-Key": self.bankr_key,
         }
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.get(url, headers=hds)
-            code = resp.status_code
-
-            if code == 200:
-                return resp.json()
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"Bankr: {tag}异常 <{code}> {resp.text}")
-                logger.warning(f"Bankr: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"Bankr: {tag}异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"Bankr: {tag}失败")
+        hds.update(headers)
+        return self.requests_retry(
+            "Bankr",
+            tag,
+            requests.get,
+            url,
+            headers=hds,
+        )
 
     def bankr_post(
         self,
@@ -70,24 +99,14 @@ class AgentMoney:
             "X-API-Key": self.bankr_key,
         }
         hds.update(headers)
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.post(url, headers=hds, json=data)
-            code = resp.status_code
-
-            if code == 200:
-                return resp.json()
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
-                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"{self.app_name}: {tag}失败")
+        return self.requests_retry(
+            "Bankr",
+            tag,
+            requests.post,
+            url,
+            headers=hds,
+            json=data,
+        )
 
     def app_get(self, path: str, headers: dict, tag: str) -> dict[str, Any]:
         url = f"{self.app_url}{path}"
@@ -96,24 +115,13 @@ class AgentMoney:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         }
         hds.update(headers)
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.get(url, headers=hds)
-            code = resp.status_code
-
-            if code == 200:
-                return resp.json()
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
-                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"{self.app_name}: {tag}失败")
+        return self.requests_retry(
+            f"{self.app_name}",
+            tag,
+            requests.get,
+            url,
+            headers=hds,
+        )
 
     def app_post(
         self,
@@ -123,24 +131,19 @@ class AgentMoney:
         tag: str,
     ) -> dict[str, Any]:
         url = f"{self.app_url}{path}"
-        retry = self.default_retry_count
-        wait = self.default_wait_seconds
-        while retry:
-            resp = requests.post(url, headers=headers, json=data)
-            code = resp.status_code
-
-            if code == 200:
-                return resp.json()
-            elif code == 429 or 500 <= code < 600:
-                logger.warning(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
-                logger.warning(f"{self.app_name}: 等待{wait}秒后重试...")
-                retry -= 1
-                time.sleep(wait)
-                continue
-            else:
-                raise Exception(f"{self.app_name}: {tag}异常 <{code}> {resp.text}")
-        else:
-            raise Exception(f"{self.app_name}: {tag}失败")
+        hds = {
+            "Content-type": "Application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        }
+        hds.update(headers)
+        return self.requests_retry(
+            f"{self.app_name}",
+            tag,
+            requests.post,
+            url,
+            headers=headers,
+            json=data,
+        )
 
     def llm_get(self, path: str) -> dict[str, Any]:
         assert path
@@ -173,7 +176,7 @@ class AgentMoney:
     ### 功能方法
 
     def bankr_get_address(self) -> str:
-        resp = self.bankr_get("/agent/me", "获取evm地址")
+        resp = self.bankr_get("/agent/me", {}, "获取evm地址")
         wallets = resp["wallets"]
         evm_wallet = [w for w in wallets if w["chain"] == "evm"][0]
         evm_address = evm_wallet["address"]
@@ -296,11 +299,12 @@ No preamble. No JSON. Just the artifact.
         while True:
             try:
                 self.mine()
-            except KeyboardInterrupt as e:
-                logger.info("收到中断信号，程序已停止")
-                return 1
             except Exception as e:
-                logger.error(e)
+                time.sleep(self.default_wait_seconds)
+                logger.error(f"挖矿异常：{repr(e)}")
+            except KeyboardInterrupt as e:
+                logger.error("挖矿结束：收到中断信号")
+                return 1
 
 
 if __name__ == "__main__":
